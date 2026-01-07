@@ -1,0 +1,14 @@
+
+.idea/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# 敏感配置
+.env
+config/settings.yaml
+
+# 数据文件 (本地保留，不传云端)
+data/
+*.parquet
+*.csv
