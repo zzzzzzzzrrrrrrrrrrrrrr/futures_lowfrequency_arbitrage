@@ -12,3 +12,4 @@ config/settings.yaml
 data/
 *.parquet
 *.csv
+!src/data/
