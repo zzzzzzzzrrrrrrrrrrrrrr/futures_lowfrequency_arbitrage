@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.1",
+  "specs_as_of": "2026-01-08",
+  "source": "manual_entry_v1",
+  "contracts": {
+    "RB": {
+      "name": "螺纹钢",
+      "exchange": "SHF",
+      "static": {
+        "multiplier": 10,
+        "tick_size": 1,
+        "product_type": "Future"
+      },
+      "override": {
+        "margin_rate": 0.13,
+        "comm_rate": 0.0001,
+        "fee_model": "rate",
+        "notes": "Base margin from broker A"
+      }
+    },
+    "HC": {
+      "name": "热轧卷板",
+      "exchange": "SHF",
+      "static": {
+        "multiplier": 10,
+        "tick_size": 1,
+        "product_type": "Future"
+      },
+      "override": {
+        "margin_rate": 0.13,
+        "comm_rate": 0.0001,
+        "fee_model": "rate",
+        "notes": "Base margin from broker A"
+      }
+    },
+    "I": {
+      "name": "铁矿石",
+      "exchange": "DCE",
+      "static": {
+        "multiplier": 100,
+        "tick_size": 0.5,
+        "product_type": "Future"
+      },
+      "override": {
+        "margin_rate": 0.13,
+        "comm_rate": 0.0001,
+        "fee_model": "rate",
+        "notes": "Base margin from broker A"
+      }
+    }
+  }
+}

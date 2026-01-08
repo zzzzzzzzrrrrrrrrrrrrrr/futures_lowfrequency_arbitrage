@@ -1,0 +1,58 @@
+{
+    "timestamp": "2026-01-08T10:33:15.202739",
+    "tushare_version": "1.4.24",
+    "note": "规范化路径测试",
+    "meta_info": {
+        "data_source": "TuShare Pro / Local Config",
+        "query_contract": "RB2105.SHF",
+        "query_range": [
+            "20210101",
+            "20210301"
+        ],
+        "purpose": "Integration Test / Format Verification",
+        "data_range_start": "20210104",
+        "data_range_end": "20210301",
+        "related_symbols": [
+            "HC.SHF",
+            "RB.SHF"
+        ],
+        "contract_specs_version": [
+            "2026-01-08"
+        ]
+    },
+    "files": [
+        {
+            "file": "security_master.parquet",
+            "rows": 2,
+            "columns": [
+                "ts_code",
+                "symbol",
+                "name",
+                "multiplier",
+                "tick_size",
+                "margin_rate",
+                "comm_rate",
+                "expiry_date",
+                "specs_as_of",
+                "specs_source"
+            ],
+            "hash": "c23c4f607f01ab385d9109b76296c29f69be09909df8fa1a4814fd6ade95ee4d"
+        },
+        {
+            "file": "market_data.parquet",
+            "rows": 36,
+            "columns": [
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "settle",
+                "pre_settle",
+                "vol",
+                "oi"
+            ],
+            "hash": "f4c70653003c58ff41bbddbfe023caacac6fcef535a1d55db3dd89e481cf0edd"
+        }
+    ]
+}
