@@ -1,0 +1,54 @@
+{
+    "timestamp": "2026-01-08T14:04:31.539726",
+    "tushare_version": "1.4.24",
+    "note": "Live Integration Run",
+    "meta_info": {
+        "source": "TuShare Live",
+        "symbol": "RB2105.SHF",
+        "purpose": "Live Check",
+        "data_range_start": "20210104",
+        "data_range_end": "20210108",
+        "related_symbols": [
+            "HC.SHF",
+            "RB.SHF"
+        ],
+        "contract_specs_version": [
+            "2026-01-08"
+        ]
+    },
+    "files": [
+        {
+            "file": "live_market.parquet",
+            "rows": 5,
+            "columns": [
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "settle",
+                "pre_settle",
+                "vol",
+                "oi"
+            ],
+            "hash": "e2539eb69c92444d3bdacf510ab1feb3ea054344fc82763be8a69458bcb89cda"
+        },
+        {
+            "file": "live_specs.parquet",
+            "rows": 2,
+            "columns": [
+                "ts_code",
+                "symbol",
+                "name",
+                "multiplier",
+                "tick_size",
+                "margin_rate",
+                "comm_rate",
+                "expiry_date",
+                "specs_as_of",
+                "specs_source"
+            ],
+            "hash": "c23c4f607f01ab385d9109b76296c29f69be09909df8fa1a4814fd6ade95ee4d"
+        }
+    ]
+}

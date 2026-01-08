@@ -15,8 +15,14 @@ Description:
 # src/data/base.py
 from abc import ABC, abstractmethod
 import pandas as pd
-from typing import List
+from typing import List, Optional, TypedDict
 
+class ContractChain(TypedDict):
+    all: List[str]
+    main: Optional[str]
+    submain: Optional[str]
+    near: Optional[str]
+    next: Optional[str]
 
 class DataAdapter(ABC):
     """
@@ -31,8 +37,8 @@ class DataAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_chain(self, symbol: str, date: str) -> List[str]:
-        """获取某日的合约链（主力/次主力/近月等）"""
+    def get_chain(self, symbol: str, date: str) -> ContractChain:
+        """返回 {"all":[], "main":..., "submain":..., "near":..., "next":...}"""
         pass
 
     @abstractmethod

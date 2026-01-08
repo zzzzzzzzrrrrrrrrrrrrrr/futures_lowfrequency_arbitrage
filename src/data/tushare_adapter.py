@@ -20,7 +20,10 @@ import json
 import hashlib
 import pickle
 from dotenv import load_dotenv
-from .base import DataAdapter
+from .base import DataAdapter, ContractChain
+def _empty_chain() -> ContractChain:
+    # 每次返回新的 dict + 新的 list，避免共享引用被误改
+    return {"all": [], "main": None, "submain": None, "near": None, "next": None}
 
 load_dotenv()
 
@@ -200,13 +203,14 @@ class TuShareAdapter(DataAdapter):
         return df[available_cols].sort_values('trade_date').reset_index(
             drop=True)
 
-    def get_chain(self, symbol: str, date: str) -> dict:
+    def get_chain(self, symbol: str, date: str) -> ContractChain:
         """
         【获取合约映射】Req 1.2
         返回: {"all": [], "main": ..., "submain": ..., "near": ..., "next": ...}
         """
         specs = self.get_contract_specs(symbol)
-        if specs.empty: return {}
+        if specs.empty:
+            return _empty_chain()
 
         # 1. 筛选有效合约
         date_int = int(date)
@@ -222,7 +226,8 @@ class TuShareAdapter(DataAdapter):
         except:
             pass
 
-        if not valid_contracts: return {}
+        if not valid_contracts:
+            return _empty_chain()
 
         # 按到期日排序 (字符串排序通常能反映时间顺序，如 2101 < 2102)
         sorted_contracts = sorted(valid_contracts)
