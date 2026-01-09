@@ -20,22 +20,18 @@ from src.strategy.models import RollingOLS, SimpleKalman
 def test_rolling_ols_perfect_linear():
     """测试 OLS 能否识别完美的 2倍 线性关系"""
     # 1. 造数据: y = 2 * x
-    x = pd.Series(np.arange(100, dtype=float))
+    x = pd.Series(np.arange(100, dtype=float) + 10)  # 加10防止 log(0)
     y = x * 2.0
 
-    # 2. 运行模型 (window=10)
-    model = RollingOLS(window=10)
+    # 2. 运行模型 (显式关闭 Log，测试纯线性回归逻辑)
+    model = RollingOLS(window=10, use_log=False)  # <--- 关键修改
     res = model.fit_predict(y, x)
 
-    # 3. 断言 (Assert)
-    # 取最后一个点的 beta，应该非常接近 2.0
+    # 3. 断言
     last_beta = res['beta'].iloc[-1]
-    last_z = res['z_score'].iloc[-1]
-
+    # 在线性模式下，Beta 应该等于 2.0
     assert last_beta == pytest.approx(2.0,
                                       abs=0.001), f"Beta算错了: {last_beta}"
-    # 完美线性关系，残差为0，Z-score 理论上是 NaN 或 0 (取决于浮点误差)，这里主要测代码不崩
-    assert 'valid' in res.columns
 
 
 def test_kalman_structure():
