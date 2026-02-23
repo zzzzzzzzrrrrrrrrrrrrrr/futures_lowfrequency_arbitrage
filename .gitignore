@@ -1,15 +1,17 @@
-
-.idea/
+﻿.idea/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+notebooks/experiment.ipynb
 
-# 敏感配置
+# sensitive local config
 .env
 config/settings.yaml
 
-# 数据文件 (本地保留，不传云端)
+# local data artifacts
 data/
+data_snapshot/
+data_snapshot_smoke/
 *.parquet
 *.csv
 !src/data/
