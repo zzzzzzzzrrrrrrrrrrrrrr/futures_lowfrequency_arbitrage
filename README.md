@@ -1,47 +1,111 @@
-# Futures Pair Trading Backtester (期货配对交易回测系统)
+# Futures Pair Trading Backtester
 
 ![Status](https://img.shields.io/badge/Status-Active-green)
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.11-blue)
 
-## 1. 项目简介
+## Portfolio Positioning
 
-这是一个针对**期货市场**设计的配对交易（统计套利）回测工具。
+This is not a "high Sharpe demo."  
+It is a **research-to-production style stat-arb framework** for futures, built to prioritize:
 
-很多网上的教程或 demo 代码在计算收益时，往往假设“信号出现的瞬间就能成交”，或者忽略了参数计算时的未来函数，导致回测曲线非常漂亮，但一上实盘就失效。
+1. Honest backtests (no hidden look-ahead leakage).
+2. Reproducibility (auditable data snapshots and metadata).
+3. Operational robustness (degrade gracefully under real-world data failures).
 
-**本项目的核心目的只有两个：**
-1.  **不说谎**：严格区分“观察期”和“执行期”，杜绝未来函数。
-2.  **可复现**：代码结构清晰，确保每一次回测的逻辑与实盘执行逻辑一致。
+Most pair-trading repos focus on signal formulas.  
+This project focuses on the engineering details that usually break in live deployment.
 
----
+## What Makes This Project Different
 
-## 2. 我做了什么
+1. **Look-ahead prevention is enforced, not just claimed**
+- Spread for trading is computed from `beta_lag` (T-1 hedge ratio), not same-bar beta.
+- Stability checks also use lagged beta jumps, preventing subtle "future-aware" gating mistakes.
+- Model outputs include `valid` flags so warmup and unstable periods are explicitly blocked.
 
-我们没有发明新的数学公式，只是把经典的 OLS 和 Kalman 滤波在**工程实现**上做对了。
+2. **Execution realism is embedded in the signal workflow**
+- The logic is designed for **T signal -> T+1 action**, instead of same-bar fill assumptions.
+- This intentionally sacrifices inflated paper performance in exchange for realistic behavior.
 
-### 真正防未来函数 (No Look-ahead Bias)
-- **模型层**：在计算 Spread 时，强制使用**滞后一期 ($T-1$)** 的 Beta。
-    - *原因*：你不能用今天的收盘价算出来的 Beta，去指导今天盘中的对冲，这是穿越。
-- **执行层**：强制 **T+1 执行**。
-    - *逻辑*：$T$ 日收盘产生信号 -> $T+1$ 日开盘/收盘成交。哪怕回测收益低一点，但这才是真的。
+3. **Non-obvious robustness: Soft Invalid -> Hold**
+- When indicators are invalid (`NaN`/`Inf`), the strategy enters a `Hold` state instead of forced flat.
+- This avoids unnecessary churn/slippage caused by transient data glitches, a failure mode many demos ignore.
 
-### 适配期货特性的风控
-- **波动率倒数加权**：期货自带杠杆，不能全仓梭哈。我们引入了 `vol_target`，波动率越大，自动把仓位系数降下来。
-- **协整失效保护**：内置了 Rolling ADF 检验，当价差不再均值回归（趋势化）时，自动停止开仓。
-- **死扛保护**：不仅有止损，还有**最大持仓天数**限制，防止资金被长期占用。
+4. **Audit-first data lifecycle**
+- Snapshots are persisted with per-file hashes and `manifest.json` metadata.
+- Runtime versions and data scope are recorded to support exact reruns and integrity checks.
+- Hash mismatch on reload raises a hard failure, guarding against silent data tampering/corruption.
 
-### 稳健的数据处理
-- **软失效 (Soft Invalid)**：数据源偶尔会有 NaN 或 Inf。普通脚本会直接报错或乱平仓，我们加入了 `Hold` 状态，数据异常时维持仓位，减少无谓的滑点磨损。
+5. **Live-data fragility is handled by design**
+- TuShare adapter includes retry, pacing, and local caching.
+- If remote requests fail, contract specs can fall back to local config while preserving source/version tags.
+- This keeps research and integration tests running when external APIs are unstable.
 
----
+## Technical Highlights (Implemented)
 
-## 3. 项目结构
+1. **Model Layer (`src/strategy/models.py`)**
+- Rolling OLS and adaptive Kalman implementations.
+- Rolling ADF checks for mean-reversion regime validity.
+- Defensive numerical handling (`std=0`, non-finite values, warmup validity).
+
+2. **Signal Layer (`src/strategy/signals.py`)**
+- Stateful position engine with entry/exit/cooldown/holding timers.
+- Risk gates: stop-loss, max-holding-days, volatility filter, beta-jump gate, ADF gate.
+- Volatility-target scaling via `vol_target`.
+
+3. **Data Layer (`src/data/`)**
+- Standardized adapter interface for decoupling strategy from provider implementation.
+- TuShare integration with resilient query behavior.
+- Snapshot manager with hash-based reproducibility and audit metadata.
+
+4. **Verification Layer (`scripts/`, `tests/`)**
+- `run_smoke.py` for offline integrity checks.
+- `run_live.py` for end-to-end online integration checks.
+- Unit tests for model outputs, signal transitions, and snapshot lifecycle.
+
+## Repository Layout
 
 ```text
+main.py
+scripts/
+  run_smoke.py          # Offline smoke tests (no network)
+  run_live.py           # TuShare integration test (network)
 src/
-├── models.py       # 算数的：RollingOLS, KalmanFilter (计算 Beta, Z-Score)
-├── signals.py      # 决策的：把 Z-Score 变成 -1/0/1，处理止损、冷却期
-├── execution/      
-│   └── sim_adapter.py  # 算钱的：模拟 T+1 成交，扣手续费，出净值
-├── rules.py        # 调参的：所有阈值、窗口都在这里
-└── main.py         # 启动脚本
+  data/
+    base.py             # Data adapter interface
+    tushare_adapter.py  # TuShare implementation + fallback/cache/retry
+    storage.py          # Snapshot save/load + hash audit manifest
+  strategy/
+    base.py             # Model/signal abstract interfaces
+    models.py           # RollingOLS + SimpleKalman
+    signals.py          # Signal state machine + risk gates
+    rules.py            # StrategyConfig (all thresholds and controls)
+tests/
+  test_models.py
+  test_signals.py
+  test_data.py
+config/
+  instruments.json
+  settings.yaml
+  universe.json
+```
+
+## Quick Start
+
+1. Create environment with Conda:
+
+```bash
+conda env create -f environment.yml
+conda activate futures-lowfreq-arb
+```
+
+2. Set `TUSHARE_TOKEN` in `.env` (required for live integration).
+
+3. Run one of the entry points:
+
+```bash
+python main.py
+# or
+python scripts/run_smoke.py
+python scripts/run_live.py
+pytest -v
+```

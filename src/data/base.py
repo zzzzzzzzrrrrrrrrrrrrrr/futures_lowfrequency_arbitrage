@@ -12,7 +12,6 @@ Description:
 @email: [你的邮箱]
 @version: 1.0
 """
-# src/data/base.py
 from abc import ABC, abstractmethod
 import pandas as pd
 from typing import List, Optional, TypedDict
