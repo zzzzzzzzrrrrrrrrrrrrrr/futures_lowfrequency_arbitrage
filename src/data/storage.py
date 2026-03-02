@@ -54,6 +54,55 @@ class SnapshotManager:
                               double_precision=10)
         return hashlib.sha256(data_str.encode('utf-8')).hexdigest()
 
+    def _calc_file_hash(self, file_path: str, chunk_size: int = 1024 * 1024) -> str:
+        """
+        计算文件字节级 SHA256。
+        使用文件哈希可避免 CSV 读回类型漂移导致的误报。
+        """
+        hasher = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _collect_dtypes(self, df: pd.DataFrame) -> dict:
+        """记录列类型，供 CSV 读回时恢复。"""
+        return {col: str(dtype) for col, dtype in df.dtypes.items()}
+
+    def _restore_dtypes(self, df: pd.DataFrame, dtype_map: dict) -> pd.DataFrame:
+        """按 manifest 中记录的类型尽量恢复 DataFrame 类型。"""
+        if not dtype_map:
+            return df
+
+        for col, dtype_name in dtype_map.items():
+            if col not in df.columns:
+                continue
+            try:
+                if dtype_name == "object":
+                    # CSV 会把纯数字字符串推断为 int，这里统一拉回字符串语义。
+                    series = df[col]
+                    df[col] = series.where(series.isna(), series.astype(str))
+                elif dtype_name.startswith("datetime64"):
+                    df[col] = pd.to_datetime(df[col], errors="coerce")
+                elif dtype_name == "bool":
+                    df[col] = df[col].astype(bool)
+                elif dtype_name == "boolean":
+                    df[col] = df[col].astype("boolean")
+                elif dtype_name.startswith("int"):
+                    if df[col].isna().any():
+                        df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+                    else:
+                        df[col] = pd.to_numeric(df[col], errors="raise").astype(dtype_name)
+                elif dtype_name.startswith("float"):
+                    df[col] = pd.to_numeric(df[col], errors="coerce").astype(dtype_name)
+            except Exception:
+                # 类型恢复失败时保留原列，避免中断加载流程。
+                pass
+        return df
+
     def save_snapshot(self, data_map: dict, note: str = "",
                       extra_meta: dict = None):
         """
@@ -132,13 +181,15 @@ class SnapshotManager:
                 file_full_path = os.path.join(folder_path, file_name)
                 df.to_csv(file_full_path, index=False)
 
-            data_hash = self._calc_hash(df)
+            file_hash = self._calc_file_hash(file_full_path)
 
             manifest["files"].append({
                 "file": file_name,
                 "rows": len(df),
                 "columns": list(df.columns),
-                "hash": data_hash
+                "hash": file_hash,
+                "hash_type": "file_sha256",
+                "dtypes": self._collect_dtypes(df)
             })
 
         with open(os.path.join(folder_path, "manifest.json"), "w",
@@ -178,14 +229,21 @@ class SnapshotManager:
                 df = pd.read_parquet(file_path)
             else:
                 df = pd.read_csv(file_path)
+                df = self._restore_dtypes(df, file_info.get("dtypes", {}))
 
             # 校验
-            current_hash = self._calc_hash(df)
+            hash_type = file_info.get("hash_type", "dataframe_sha256")
+            if hash_type == "file_sha256":
+                current_hash = self._calc_file_hash(file_path)
+            elif hash_type == "dataframe_sha256":
+                current_hash = self._calc_hash(df)
+            else:
+                raise ValueError(f"不支持的哈希类型: {hash_type}")
             if current_hash != file_info["hash"]:
                 raise ValueError(
                     f"严重警告: {file_info['file']} 数据完整性校验失败！(Hash Mismatch)")
 
-            name = file_info["file"].split('.')[0]
+            name = os.path.splitext(file_info["file"])[0]
             data[name] = df
 
         print("数据完整性校验通过")

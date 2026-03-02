@@ -31,6 +31,20 @@ from src.data.tushare_adapter import TuShareAdapter
 from src.data.storage import SnapshotManager
 
 
+def _format_query_source(audit: dict, default_desc: str = "未知") -> str:
+    if not audit:
+        return default_desc
+    source = audit.get("source")
+    if source == "cache":
+        return "本地缓存（历史 TuShare 拉取结果）"
+    if source == "tushare":
+        return "TuShare 在线查询"
+    if source == "error":
+        err = audit.get("error", "")
+        return f"TuShare 查询失败（{err}）"
+    return default_desc
+
+
 def live_chain_test():
     print("=== 启动在线全链路测试 (Live Integration) ===")
 
@@ -47,12 +61,28 @@ def live_chain_test():
     symbol = 'RB2105.SHF'
     start = '20210101'
     end = '20210110'
+    force_online = os.getenv("LIVE_FORCE_ONLINE", "0") == "1"
+    use_cache = not force_online
     print(f"\n[Step 2] 拉取真实行情 ({symbol}: {start}-{end})...")
+    if force_online:
+        print("     [Info] LIVE_FORCE_ONLINE=1，已关闭本地缓存，强制联网查询")
+    else:
+        print("     [Info] 默认模式：允许使用本地缓存（可设置 LIVE_FORCE_ONLINE=1 关闭缓存）")
 
-    specs = adapter.get_contract_specs('SHF')
+    specs = adapter.get_contract_specs('SHF', use_cache=use_cache)
+    specs_audit = adapter.get_last_query_audit('fut_basic')
     print(f"     合约表获取成功: {len(specs)} 条")
+    print(f"     合约表来源: {_format_query_source(specs_audit)}")
+    print("     合约表说明: 交易所合约基础信息更新频率较低，默认可长期复用缓存。")
+    specs_cache_file = specs_audit.get("cache_file") if specs_audit else None
+    if specs_cache_file:
+        print(f"     合约表缓存文件: {specs_cache_file}")
+        print("     如需强制刷新合约表: 删除该缓存文件后重跑，或设置 LIVE_FORCE_ONLINE=1。")
 
-    df = adapter.get_daily_bars(symbol, start, end)
+    df = adapter.get_daily_bars(symbol, start, end, use_cache=use_cache)
+    daily_audit = adapter.get_last_query_audit('fut_daily')
+    print(f"     日线来源: {_format_query_source(daily_audit)}")
+    print("     说明: 合约表条数是该交易所可查询合约总数；行情条数是单一合约在日期区间内的交易日数量，两者不是前后截取关系。")
 
     if df.empty:
         print("     [Warn] 数据为空 (可能是权限问题或日期错误)")

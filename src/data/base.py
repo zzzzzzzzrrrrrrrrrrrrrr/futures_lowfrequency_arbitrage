@@ -31,7 +31,8 @@ class DataAdapter(ABC):
     """
 
     @abstractmethod
-    def get_contract_specs(self, symbol: str) -> pd.DataFrame:
+    def get_contract_specs(self, symbol: str,
+                           use_cache: bool = True) -> pd.DataFrame:
         """获取合约规格：乘数、tick、手续费等"""
         pass
 
@@ -42,7 +43,8 @@ class DataAdapter(ABC):
 
     @abstractmethod
     def get_daily_bars(self, contract: str, start_date: str,
-                       end_date: str) -> pd.DataFrame:
+                       end_date: str,
+                       use_cache: bool = True) -> pd.DataFrame:
         """
         获取日线行情
         必须包含标准字段: open, high, low, close, vol, oi (持仓量), settle (结算价)

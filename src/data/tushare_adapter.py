@@ -21,6 +21,30 @@ import hashlib
 import pickle
 from dotenv import load_dotenv
 from .base import DataAdapter, ContractChain
+
+_KNOWN_EXCHANGES = {"SHF", "DCE", "CZCE", "CFFEX", "INE", "GFEX"}
+
+# Internal codes follow ts_code suffix style (e.g. RB2405.SHF).
+_EXCHANGE_SUFFIX_ALIASES = {
+    "SHFE": "SHF",
+}
+
+# TuShare endpoint expects SHFE in fut_basic(exchange=...).
+_TUSHARE_EXCHANGE_ALIASES = {
+    "SHF": "SHFE",
+}
+
+
+def _normalize_exchange_suffix(exchange: str) -> str:
+    raw = str(exchange).strip().upper()
+    return _EXCHANGE_SUFFIX_ALIASES.get(raw, raw)
+
+
+def _to_tushare_exchange(exchange: str) -> str:
+    suffix_code = _normalize_exchange_suffix(exchange)
+    return _TUSHARE_EXCHANGE_ALIASES.get(suffix_code, suffix_code)
+
+
 def _empty_chain() -> ContractChain:
     # 每次返回新的 dict + 新的 list，避免共享引用被误改
     return {"all": [], "main": None, "submain": None, "near": None, "next": None}
@@ -51,6 +75,8 @@ class TuShareAdapter(DataAdapter):
 
         # Req 1.4: 限频计数器
         self.last_req_time = 0
+        # 记录最近一次查询来源（cache / tushare / error），便于上层可解释输出
+        self.query_audit = {}
 
     def _get_cache_key(self, func_name, kwargs):
         raw_key = f"{func_name}_{sorted(kwargs.items())}"
@@ -59,11 +85,25 @@ class TuShareAdapter(DataAdapter):
     def _safe_query(self, func_name: str, use_cache=True, **kwargs):
         cache_key = self._get_cache_key(func_name, kwargs)
         cache_file = os.path.join(self.cache_dir, f"{cache_key}.pkl")
+        audit = {
+            "func": func_name,
+            "kwargs": dict(kwargs),
+            "use_cache": bool(use_cache),
+            "source": None,
+            "cache_file": cache_file,
+            "cache_hit": False,
+            "rows": None
+        }
 
         if use_cache and os.path.exists(cache_file):
             try:
                 with open(cache_file, 'rb') as f:
-                    return pickle.load(f)
+                    df = pickle.load(f)
+                audit["source"] = "cache"
+                audit["cache_hit"] = True
+                audit["rows"] = len(df) if isinstance(df, pd.DataFrame) else None
+                self.query_audit[func_name] = audit
+                return df
             except:
                 pass
 
@@ -71,6 +111,7 @@ class TuShareAdapter(DataAdapter):
         if elapsed < 0.3:
             time.sleep(0.3 - elapsed)
 
+        last_error = None
         for i in range(3):
             try:
                 func = getattr(self.pro, func_name)
@@ -79,11 +120,22 @@ class TuShareAdapter(DataAdapter):
 
                 if use_cache and not df.empty:
                     with open(cache_file, 'wb') as f: pickle.dump(df, f)
+                audit["source"] = "tushare"
+                audit["rows"] = len(df)
+                self.query_audit[func_name] = audit
                 return df
-            except Exception:
+            except Exception as e:
+                last_error = str(e)
                 time.sleep(1 * (i + 1))
 
-        raise ConnectionError(f"查询 {func_name} 失败，已重试 3 次")
+        audit["source"] = "error"
+        audit["error"] = last_error
+        self.query_audit[func_name] = audit
+        raise ConnectionError(
+            f"查询 {func_name} 失败，已重试 3 次。最后错误: {last_error}")
+
+    def get_last_query_audit(self, func_name: str):
+        return self.query_audit.get(func_name, {}).copy()
 
     def _load_local_config(self):
         try:
@@ -99,7 +151,34 @@ class TuShareAdapter(DataAdapter):
         except:
             return {}
 
-    def get_contract_specs(self, symbol: str) -> pd.DataFrame:
+    def _resolve_chain_target(self, symbol: str):
+        """
+        规范化 get_chain 入参:
+        - "RB" -> ("RB", "SHF")，从本地配置推断交易所
+        - "RB.SHF" -> ("RB", "SHF")
+        - "SHF" -> (None, "SHF")，仅交易所信息无法唯一确定品种链
+        """
+        raw = str(symbol).strip().upper()
+
+        if "." in raw:
+            left, right = raw.split(".", 1)
+            right = _normalize_exchange_suffix(right)
+            if left and right in _KNOWN_EXCHANGES:
+                return left, right
+
+        local_contracts = self._load_local_config().get("contracts", {})
+        if raw in local_contracts:
+            exchange = str(local_contracts[raw].get("exchange", "")).upper()
+            return raw, exchange if exchange else None
+
+        normalized_exchange = _normalize_exchange_suffix(raw)
+        if normalized_exchange in _KNOWN_EXCHANGES:
+            return None, normalized_exchange
+
+        return raw, None
+
+    def get_contract_specs(self, symbol: str,
+                           use_cache: bool = True) -> pd.DataFrame:
         """
         【获取合约信息】Req 1.2 (专业分层版)
         逻辑: 优先联网 -> 失败则使用本地配置构造
@@ -108,6 +187,8 @@ class TuShareAdapter(DataAdapter):
         2. 输出 DataFrame 携带 specs_as_of 和 specs_source，实现审计闭环
         """
         raw_config = self._load_local_config()
+        symbol = str(symbol).strip().upper()
+        symbol = _normalize_exchange_suffix(symbol)
 
         # 提取元数据和合约体
         meta_as_of = raw_config.get("specs_as_of", "N/A")
@@ -116,10 +197,13 @@ class TuShareAdapter(DataAdapter):
 
         # 1. 尝试联网获取
         df = pd.DataFrame()
+        query_error = None
+        query_exchange = _to_tushare_exchange(symbol)
         try:
-            df = self._safe_query('fut_basic', exchange=symbol)
-        except:
-            pass
+            df = self._safe_query('fut_basic', exchange=query_exchange,
+                                  use_cache=use_cache)
+        except Exception as e:
+            query_error = str(e)
 
         # 2. 如果联网失败，使用本地配置构造 (Fallback)
         if df.empty:
@@ -145,8 +229,10 @@ class TuShareAdapter(DataAdapter):
                     })
 
             if records:
-                print(
-                    f"⚠️ 警告: TuShare不可用，已降级使用本地配置 (Static+Override)")
+                reason = f"fut_basic返回空结果(exchange={query_exchange})"
+                if query_error:
+                    reason = f"fut_basic失败(exchange={query_exchange}): {query_error}"
+                print(f"⚠️ 警告: TuShare不可用，已降级使用本地配置 (Static+Override) | 原因: {reason}")
                 df_fallback = pd.DataFrame(records)
                 # 【新增】透传元数据
                 df_fallback['specs_as_of'] = meta_as_of
@@ -188,19 +274,28 @@ class TuShareAdapter(DataAdapter):
 
         return df
     def get_daily_bars(self, contract: str, start_date: str,
-                       end_date: str) -> pd.DataFrame:
+                       end_date: str,
+                       use_cache: bool = True) -> pd.DataFrame:
         try:
             df = self._safe_query('fut_daily', ts_code=contract.upper(),
-                                  start_date=start_date, end_date=end_date)
+                                  start_date=start_date, end_date=end_date,
+                                  use_cache=use_cache)
         except:
             return pd.DataFrame()
 
         if df.empty: return pd.DataFrame()
 
         required_cols = ['trade_date', 'open', 'high', 'low', 'close',
-                         'settle', 'pre_settle', 'vol', 'oi']
-        available_cols = [c for c in required_cols if c in df.columns]
-        return df[available_cols].sort_values('trade_date').reset_index(
+                         'settle', 'vol', 'oi']
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            raise ValueError(
+                f"fut_daily 缺少必需字段: {missing_cols} (contract={contract})")
+
+        optional_cols = ['pre_settle']
+        selected_cols = required_cols + [c for c in optional_cols if
+                                         c in df.columns]
+        return df[selected_cols].sort_values('trade_date').reset_index(
             drop=True)
 
     def get_chain(self, symbol: str, date: str) -> ContractChain:
@@ -208,7 +303,12 @@ class TuShareAdapter(DataAdapter):
         【获取合约映射】Req 1.2
         返回: {"all": [], "main": ..., "submain": ..., "near": ..., "next": ...}
         """
-        specs = self.get_contract_specs(symbol)
+        target_symbol, target_exchange = self._resolve_chain_target(symbol)
+        if not target_symbol:
+            return _empty_chain()
+
+        specs_query_key = target_exchange if target_exchange else target_symbol
+        specs = self.get_contract_specs(specs_query_key)
         if specs.empty:
             return _empty_chain()
 
@@ -217,7 +317,9 @@ class TuShareAdapter(DataAdapter):
         valid_contracts = []
         try:
             for _, row in specs.iterrows():
-                if row['symbol'] != symbol: continue
+                row_symbol = str(row.get('symbol', '')).upper()
+                if row_symbol != target_symbol:
+                    continue
                 # 简单容错处理
                 expiry = int(row['expiry_date']) if str(
                     row['expiry_date']).isdigit() else 20991231
@@ -235,7 +337,7 @@ class TuShareAdapter(DataAdapter):
         # 2. 确定主力 (Main)
         main_contract = None
         try:
-            mapping_df = self._safe_query('fut_mapping', ts_code=symbol,
+            mapping_df = self._safe_query('fut_mapping', ts_code=target_symbol,
                                           trade_date=date)
             if not mapping_df.empty:
                 main_contract = mapping_df.iloc[0]['mapping_ts_code']
